@@ -15,6 +15,7 @@ import KeyTable from "../core/input/keysym.js";
 import keysyms from "../core/input/keysymdef.js";
 import Keyboard from "../core/input/keyboard.js";
 import RFB from "../core/rfb.js";
+import WebAudio from "../core/webaudio.js";
 import * as WebUtil from "./webutil.js";
 
 const PAGE_TITLE = "noVNC";
@@ -100,6 +101,7 @@ const UI = {
         UI.addConnectionControlHandlers();
         UI.addClipboardHandlers();
         UI.addSettingsHandlers();
+        UI.addToggleAudioHandler();
         document.getElementById("noVNC_status")
             .addEventListener('click', UI.hideStatus);
 
@@ -162,17 +164,20 @@ const UI = {
         }
 
         /* Populate the controls if defaults are provided in the URL */
+        let token = (window.location.pathname ? window.location.pathname.substring(1, window.location.pathname.length-1) : 'novnc');
         UI.initSetting('host', window.location.hostname);
         UI.initSetting('port', port);
         UI.initSetting('encrypt', (window.location.protocol === "https:"));
         UI.initSetting('view_clip', false);
-        UI.initSetting('resize', 'off');
+        UI.initSetting('resize', 'remote');
         UI.initSetting('quality', 6);
         UI.initSetting('compression', 2);
         UI.initSetting('shared', true);
         UI.initSetting('view_only', false);
         UI.initSetting('show_dot', false);
         UI.initSetting('path', 'websockify');
+        UI.initSetting('token', token);
+        UI.initSetting('webaudio', 'audio_' + token);
         UI.initSetting('repeaterID', '');
         UI.initSetting('reconnect', false);
         UI.initSetting('reconnect_delay', 5000);
@@ -378,6 +383,10 @@ const UI = {
         window.addEventListener('msfullscreenchange', UI.updateFullscreenButton);
     },
 
+    addToggleAudioHandler() {
+        document.getElementById("noVNC_toggle_audio_button")
+            .addEventListener('click', UI.toggleAudio);
+    },
 /* ------^-------
  * /EVENT HANDLERS
  * ==============
@@ -992,6 +1001,8 @@ const UI = {
         const host = UI.getSetting('host');
         const port = UI.getSetting('port');
         const path = UI.getSetting('path');
+        const token = UI.getSetting('token');
+        const audio_token = UI.getSetting('webaudio');
 
         if (typeof password === 'undefined') {
             password = WebUtil.getConfigVar('password');
@@ -1024,7 +1035,8 @@ const UI = {
         }
         url += '/' + path;
 
-        UI.rfb = new RFB(document.getElementById('noVNC_container'), url,
+        let rfb_url = url + '?token=' + token;
+        UI.rfb = new RFB(document.getElementById('noVNC_container'), rfb_url,
                          { shared: UI.getSetting('shared'),
                            repeaterID: UI.getSetting('repeaterID'),
                            credentials: { password: password } });
@@ -1042,6 +1054,9 @@ const UI = {
         UI.rfb.qualityLevel = parseInt(UI.getSetting('quality'));
         UI.rfb.compressionLevel = parseInt(UI.getSetting('compression'));
         UI.rfb.showDotCursor = UI.getSetting('show_dot');
+
+        let audio_url = url + '?token=' + audio_token; 
+        UI.wa = new WebAudio(audio_url);
 
         UI.updateViewOnly(); // requires UI.rfb
     },
@@ -1094,6 +1109,8 @@ const UI = {
         }
         UI.showStatus(msg);
         UI.updateVisualState('connected');
+
+        UI.updateAudioState();
 
         // Do this last because it can only be used on rendered elements
         UI.rfb.focus();
@@ -1621,6 +1638,42 @@ const UI = {
 
 /* ------^-------
  *   /EXTRA KEYS
+ * ==============
+ *     AUDIO
+ * ------v------*/
+
+    toggleAudio() {
+        if (!UI.wa) return;
+
+        // Use first click to trigger WebAudio to start
+        if (!UI.wa.connected) {
+            UI.wa.start(); 
+        } else {
+            UI.wa.stop();
+        } 
+
+        UI.updateAudioState();
+    },
+
+    updateAudioState() {
+        let elem = document.getElementById('noVNC_toggle_audio_button');
+        
+        if (!UI.wa) {
+            let isHidden = elem.classList.contains('noVNC_hidden');
+            if (!isHidden) elem.classList.add('noVNC_hidden');
+            return;
+        }
+
+        elem.classList.remove('noVNC_hidden');
+        if (UI.wa.audio) {
+            if (!elem.classList.contains('noVNC_selected')) elem.classList.add('noVNC_selected');
+        } else {
+            elem.classList.remove('noVNC_selected');
+        }
+    },
+
+/* ------^-------
+ *    /AUDIO
  * ==============
  *     MISC
  * ------v------*/

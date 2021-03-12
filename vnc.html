@@ -148,6 +148,11 @@
                 id="noVNC_fullscreen_button" class="noVNC_button noVNC_hidden"
                 title="Fullscreen">
 
+            <!-- Mute / Unmute -->
+            <input type="image" alt="Mute/Unmute" src="app/images/speaker.svg"
+                id="noVNC_toggle_audio_button" class="noVNC_button noVNC_hidden"
+                title="Mute/Unmute">
+
             <!-- Settings -->
             <input type="image" alt="Settings" src="app/images/settings.svg"
                 id="noVNC_settings_button" class="noVNC_button"
@@ -210,6 +215,14 @@
                                     <li>
                                         <label for="noVNC_setting_path">Path:</label>
                                         <input id="noVNC_setting_path" type="text" value="websockify">
+                                    </li>
+                                    <li>
+                                        <label for="noVNC_setting_token">VNC Token:</label>
+                                        <input id="noVNC_setting_token" type="text" value="novnc">
+                                    </li>
+                                    <li>
+                                        <label for="noVNC_setting_webaudio">WebAudio Token:</label>
+                                        <input id="noVNC_setting_webaudio" type="text" value="webaudio">
                                     </li>
                                 </ul></div>
                             </li>
