@@ -91,7 +91,7 @@ noVNC uses many modern web technologies so a formal requirement list is
 not available. However these are the minimum versions we are currently
 aware of:
 
-* Chrome 49, Firefox 44, Safari 11, Opera 36, Edge 79
+* Chrome 64, Firefox 79, Safari 13.4, Opera 51, Edge 79
 
 
 ### Server Requirements
@@ -108,13 +108,13 @@ proxy.
 
 ### Quick Start
 
-* Use the launch script to automatically download and start websockify, which
+* Use the `novnc_proxy` script to automatically download and start websockify, which
   includes a mini-webserver and the WebSockets proxy. The `--vnc` option is
   used to specify the location of a running VNC server:
 
-    `./utils/launch.sh --vnc localhost:5901`
+    `./utils/novnc_proxy --vnc localhost:5901`
 
-* Point your browser to the cut-and-paste URL that is output by the launch
+* Point your browser to the cut-and-paste URL that is output by the `novnc_procy`
   script. Hit the Connect button, enter a password if the VNC server has one
   configured, and enjoy!
 
