@@ -32,6 +32,8 @@ import RREDecoder from "./decoders/rre.js";
 import HextileDecoder from "./decoders/hextile.js";
 import TightDecoder from "./decoders/tight.js";
 import TightPNGDecoder from "./decoders/tightpng.js";
+import ZRLEDecoder from "./decoders/zrle.js";
+import JPEGDecoder from "./decoders/jpeg.js";
 
 // How many seconds to wait for a disconnect to finish
 const DISCONNECT_TIMEOUT = 3;
@@ -218,6 +220,8 @@ export default class RFB extends EventTargetMixin {
         this._decoders[encodings.encodingHextile] = new HextileDecoder();
         this._decoders[encodings.encodingTight] = new TightDecoder();
         this._decoders[encodings.encodingTightPNG] = new TightPNGDecoder();
+        this._decoders[encodings.encodingZRLE] = new ZRLEDecoder();
+        this._decoders[encodings.encodingJPEG] = new JPEGDecoder();
 
         // NB: nothing that needs explicit teardown should be done
         // before this point, since this can throw an exception
@@ -240,6 +244,8 @@ export default class RFB extends EventTargetMixin {
         this._sock.on('message', this._handleMessage.bind(this));
         this._sock.on('error', this._socketError.bind(this));
 
+        this._expectedClientWidth = null;
+        this._expectedClientHeight = null;
         this._resizeObserver = new ResizeObserver(this._eventHandlers.handleResize);
 
         // All prepared, kick off the connection
@@ -432,8 +438,8 @@ export default class RFB extends EventTargetMixin {
         }
     }
 
-    focus() {
-        this._canvas.focus();
+    focus(options) {
+        this._canvas.focus(options);
     }
 
     blur() {
@@ -609,7 +615,7 @@ export default class RFB extends EventTargetMixin {
             return;
         }
 
-        this.focus();
+        this.focus({ preventScroll: true });
     }
 
     _setDesktopName(name) {
@@ -619,7 +625,26 @@ export default class RFB extends EventTargetMixin {
             { detail: { name: this._fbName } }));
     }
 
+    _saveExpectedClientSize() {
+        this._expectedClientWidth = this._screen.clientWidth;
+        this._expectedClientHeight = this._screen.clientHeight;
+    }
+
+    _currentClientSize() {
+        return [this._screen.clientWidth, this._screen.clientHeight];
+    }
+
+    _clientHasExpectedSize() {
+        const [currentWidth, currentHeight] = this._currentClientSize();
+        return currentWidth == this._expectedClientWidth &&
+            currentHeight == this._expectedClientHeight;
+    }
+
     _handleResize() {
+        // Don't change anything if the client size is already as expected
+        if (this._clientHasExpectedSize()) {
+            return;
+        }
         // If the window resized then our screen element might have
         // as well. Update the viewport dimensions.
         window.requestAnimationFrame(() => {
@@ -660,6 +685,12 @@ export default class RFB extends EventTargetMixin {
             this._display.viewportChangeSize(size.w, size.h);
             this._fixScrollbars();
         }
+
+        // When changing clipping we might show or hide scrollbars.
+        // This causes the expected client dimensions to change.
+        if (curClip !== newClip) {
+            this._saveExpectedClientSize();
+        }
     }
 
     _updateScale() {
@@ -684,6 +715,7 @@ export default class RFB extends EventTargetMixin {
         }
 
         const size = this._screenSize();
+
         RFB.messages.setDesktopSize(this._sock,
                                     Math.floor(size.w), Math.floor(size.h),
                                     this._screenID, this._screenFlags);
@@ -699,12 +731,13 @@ export default class RFB extends EventTargetMixin {
     }
 
     _fixScrollbars() {
-        // This is a hack because Chrome screws up the calculation
-        // for when scrollbars are needed. So to fix it we temporarily
-        // toggle them off and on.
+        // This is a hack because Safari on macOS screws up the calculation
+        // for when scrollbars are needed. We get scrollbars when making the
+        // browser smaller, despite remote resize being enabled. So to fix it
+        // we temporarily toggle them off and on.
         const orig = this._screen.style.overflow;
         this._screen.style.overflow = 'hidden';
-        // Force Chrome to recalculate the layout by asking for
+        // Force Safari to recalculate the layout by asking for
         // an element's dimensions
         this._screen.getBoundingClientRect();
         this._screen.style.overflow = orig;
@@ -1772,6 +1805,8 @@ export default class RFB extends EventTargetMixin {
         if (this._fbDepth == 24) {
             encs.push(encodings.encodingTight);
             encs.push(encodings.encodingTightPNG);
+            encs.push(encodings.encodingZRLE);
+            encs.push(encodings.encodingJPEG);
             encs.push(encodings.encodingHextile);
             encs.push(encodings.encodingRRE);
         }
@@ -2500,6 +2535,9 @@ export default class RFB extends EventTargetMixin {
         this._updateScale();
 
         this._updateContinuousUpdates();
+
+        // Keep this size until browser client size changes
+        this._saveExpectedClientSize();
     }
 
     _xvpOp(ver, op) {
