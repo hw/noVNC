@@ -8,6 +8,7 @@ import { encodings } from '../core/encodings.js';
 import { toUnsigned32bit } from '../core/util/int.js';
 import { encodeUTF8 } from '../core/util/strings.js';
 import KeyTable from '../core/input/keysym.js';
+import legacyCrypto from '../core/crypto/crypto.js';
 
 import FakeWebSocket from './fake.websocket.js';
 
@@ -111,11 +112,12 @@ describe('Remote Frame Buffer Protocol Client', function () {
         };
 
         // Avoiding printing the entire Websock buffer on errors
-        Websock.prototype.toString = function () { return "[object Websock]"; };
+        Websock.prototype.inspect = function () { return "[object Websock]"; };
     });
 
     after(function () {
-        delete Websock.prototype.toString;
+        Websock.prototype._allocateBuffers = Websock.prototype._oldAllocateBuffers;
+        delete Websock.prototype.inspect;
         this.clock.restore();
         window.requestAnimationFrame = raf;
         window.ResizeObserver = realObserver;
@@ -430,6 +432,22 @@ describe('Remote Frame Buffer Protocol Client', function () {
                     expect(RFB.messages.clientCutText).to.have.been.calledOnce;
                     expect(RFB.messages.clientCutText).to.have.been.calledWith(client._sock,
                                                                                new Uint8Array([97, 98, 99]));
+                });
+
+                it('should mask unsupported characters', function () {
+                    client.clipboardPasteFrom('abc€');
+
+                    expect(RFB.messages.clientCutText).to.have.been.calledOnce;
+                    expect(RFB.messages.clientCutText).to.have.been.calledWith(client._sock,
+                                                                               new Uint8Array([97, 98, 99, 63]));
+                });
+
+                it('should mask characters, not UTF-16 code points', function () {
+                    client.clipboardPasteFrom('😂');
+
+                    expect(RFB.messages.clientCutText).to.have.been.calledOnce;
+                    expect(RFB.messages.clientCutText).to.have.been.calledWith(client._sock,
+                                                                               new Uint8Array([63]));
                 });
 
                 it('should send an notify if extended clipboard is supported by server', function () {
@@ -1253,6 +1271,19 @@ describe('Remote Frame Buffer Protocol Client', function () {
             });
 
             describe('ARD Authentication (type 30) Handler', function () {
+                let byteArray = new Uint8Array(Array.from(new Uint8Array(128).keys()));
+                function fakeGetRandomValues(arr) {
+                    if (arr.length == 128) {
+                        arr.set(byteArray);
+                    }
+                    return arr;
+                }
+                before(() => {
+                    sinon.stub(window.crypto, "getRandomValues").callsFake(fakeGetRandomValues);
+                });
+                after(() => {
+                    window.crypto.getRandomValues.restore();
+                });
                 it('should fire the credentialsrequired event if all credentials are missing', function () {
                     const spy = sinon.spy();
                     client.addEventListener("credentialsrequired", spy);
@@ -1281,41 +1312,116 @@ describe('Remote Frame Buffer Protocol Client', function () {
 
                     expect(client._sock).to.have.sent([30]);
 
-                    function byteArray(length) {
-                        return Array.from(new Uint8Array(length).keys());
-                    }
+                    const generator = new Uint8Array([127, 255]);
+                    const prime = new Uint8Array(byteArray);
+                    const serverKey = legacyCrypto.generateKey(
+                        { name: "DH", g: generator, p: prime }, false, ["deriveBits"]);
+                    const clientKey = legacyCrypto.generateKey(
+                        { name: "DH", g: generator, p: prime }, false, ["deriveBits"]);
+                    const serverPublicKey = legacyCrypto.exportKey("raw", serverKey.publicKey);
+                    const clientPublicKey = legacyCrypto.exportKey("raw", clientKey.publicKey);
 
-                    let generator = [127, 255];
-                    let prime = byteArray(128);
-                    let serverPrivateKey = byteArray(128);
-                    let serverPublicKey = client._modPow(generator, serverPrivateKey, prime);
-
-                    let clientPrivateKey = byteArray(128);
-                    let clientPublicKey = client._modPow(generator, clientPrivateKey, prime);
-
-                    let padding = Array.from(byteArray(64), byte => String.fromCharCode(65+byte%26)).join('');
-
-                    await client._negotiateARDAuthAsync(generator, 128, prime, serverPublicKey, clientPrivateKey, padding);
+                    await client._negotiateARDAuthAsync(128, serverPublicKey, clientKey);
 
                     client._negotiateARDAuth();
 
                     expect(client._rfbInitState).to.equal('SecurityResult');
 
                     let expectEncrypted = new Uint8Array([
-                        232, 234, 159, 162, 170, 180, 138, 104, 164, 49, 53, 96, 20, 36, 21, 15,
-                        217, 219, 107, 173, 196, 60, 96, 142, 215, 71, 13, 185, 185, 47, 5, 175,
-                        151, 30, 194, 55, 173, 214, 141, 161, 36, 138, 146, 3, 178, 89, 43, 248,
-                        131, 134, 205, 174, 9, 150, 171, 74, 222, 201, 20, 2, 30, 168, 162, 123,
-                        46, 86, 81, 221, 44, 211, 180, 247, 221, 61, 95, 155, 157, 241, 76, 76,
-                        49, 217, 234, 75, 147, 237, 199, 159, 93, 140, 191, 174, 52, 90, 133, 58,
-                        243, 81, 112, 182, 64, 62, 149, 7, 151, 28, 36, 161, 247, 247, 36, 96,
-                        230, 95, 58, 207, 46, 183, 100, 139, 143, 155, 224, 43, 219, 3, 71, 139]);
+                        199, 39, 204, 95, 190, 70, 127, 66, 5, 106, 153, 228, 123, 236, 150, 206,
+                        62, 107, 11, 4, 21, 242, 92, 184, 9, 81, 35, 125, 56, 167, 1, 215,
+                        182, 145, 183, 75, 245, 197, 47, 19, 122, 94, 64, 76, 77, 163, 222, 143,
+                        186, 174, 84, 39, 244, 179, 227, 114, 83, 231, 42, 106, 205, 43, 159, 110,
+                        209, 240, 157, 246, 237, 206, 134, 153, 195, 112, 92, 60, 28, 234, 91, 66,
+                        131, 38, 187, 195, 110, 167, 212, 241, 32, 250, 212, 213, 202, 89, 180, 21,
+                        71, 217, 209, 81, 42, 61, 118, 248, 65, 123, 98, 78, 139, 111, 202, 137,
+                        50, 185, 37, 173, 58, 99, 187, 53, 42, 125, 13, 165, 232, 163, 151, 42, 0]);
 
                     let output = new Uint8Array(256);
                     output.set(expectEncrypted, 0);
                     output.set(clientPublicKey, 128);
 
                     expect(client._sock).to.have.sent(output);
+                });
+            });
+
+            describe('MSLogonII Authentication (type 113) Handler', function () {
+                function fakeGetRandomValues(arr) {
+                    if (arr.length == 8) {
+                        arr.set(new Uint8Array([0, 0, 0, 0, 5, 6, 7, 8]));
+                    } else if (arr.length == 256) {
+                        arr.set(new Uint8Array(256));
+                    } else if (arr.length == 64) {
+                        arr.set(new Uint8Array(64));
+                    }
+                    return arr;
+                }
+                const expected = new Uint8Array([
+                    0x00, 0x00, 0x00, 0x00, 0x0a, 0xbc, 0x7c, 0xfd,
+                    0x58, 0x34, 0xd2, 0x24, 0x44, 0x60, 0xf0, 0xd1,
+                    0xa3, 0x73, 0x32, 0x02, 0x07, 0xce, 0xc1, 0x3f,
+                    0x10, 0x53, 0xf1, 0xdd, 0x99, 0xad, 0x44, 0x18,
+                    0xa1, 0xc4, 0xac, 0xc1, 0x1c, 0x13, 0x11, 0x85,
+                    0x3a, 0x6f, 0xcb, 0xc6, 0xb1, 0x6c, 0x68, 0x47,
+                    0x85, 0x01, 0xbb, 0xfa, 0x23, 0x8c, 0x59, 0x47,
+                    0x67, 0x47, 0x56, 0x6e, 0x6f, 0x9f, 0x07, 0x76,
+                    0x2e, 0x90, 0x1e, 0xdc, 0x80, 0xc4, 0x4b, 0x72,
+                    0xd2, 0xd5, 0xcd, 0x4b, 0x14, 0xff, 0x05, 0x8b,
+                    0x8d, 0xf1, 0x9b, 0xe0, 0xff, 0xa5, 0x3b, 0x56,
+                    0xb9, 0x6f, 0x84, 0x3e, 0x15, 0x84, 0x31, 0x4e,
+                    0x10, 0x0b, 0x56, 0xf4, 0x10, 0x05, 0x02, 0xc7,
+                    0x05, 0x0b, 0xc9, 0x66, 0x75, 0x32, 0xd3, 0x74,
+                    0xfc, 0x8c, 0xcf, 0xbd, 0x2d, 0x53, 0xd7, 0xa7,
+                    0xca, 0x82, 0x12, 0xce, 0xbb, 0x33, 0x09, 0x3f,
+                    0xff, 0x76, 0x7c, 0xdf, 0x2c, 0x2f, 0x4d, 0x95,
+                    0x86, 0xe4, 0x10, 0x07, 0x75, 0x1a, 0x6d, 0xdb,
+                    0x05, 0x91, 0x70, 0x34, 0x5c, 0x12, 0xbc, 0x4e,
+                    0x5e, 0xd0, 0x21, 0x39, 0x25, 0x2b, 0x62, 0x19,
+                    0x29, 0xa5, 0xe6, 0x93, 0x7b, 0xf8, 0x3f, 0xcf,
+                    0xd7, 0x3f, 0x0c, 0xd2, 0x68, 0x2d, 0x1e, 0x01,
+                    0x1a, 0x31, 0xc1, 0x59, 0x04, 0x06, 0xf6, 0x3b,
+                    0xec, 0x38, 0xef, 0x1b, 0x5b, 0x39, 0x88, 0xd3,
+                    0xe0, 0x5b, 0xb9, 0xef, 0xc3, 0x82, 0xfa, 0xdf,
+                    0x04, 0xf7, 0x65, 0x56, 0x82, 0x77, 0xfd, 0x63,
+                    0x10, 0xd7, 0xab, 0x0b, 0x5e, 0xd9, 0x07, 0x81,
+                    0x9d, 0xce, 0x26, 0xfb, 0x5d, 0xa8, 0x59, 0x2a,
+                    0xd9, 0xb8, 0xac, 0xcd, 0x6e, 0x61, 0x07, 0x39,
+                    0x9f, 0x8d, 0xdf, 0x53, 0x44, 0xab, 0x28, 0x01,
+                    0x86, 0x4d, 0x07, 0x8a, 0x5b, 0xdd, 0xc1, 0x18,
+                    0x29, 0xaa, 0xa2, 0xbe, 0xe2, 0x9c, 0x9e, 0xb0,
+                    0xb3, 0x2b, 0x2c, 0x93, 0x3e, 0x82, 0x07, 0xa6,
+                    0xef, 0x21, 0x2c, 0xa7, 0xf0, 0x65, 0xba, 0xda,
+                    0x13, 0xe4, 0x41, 0x87, 0x36, 0x1c, 0xa5, 0x81,
+                    0xae, 0xf3, 0x3e, 0xda, 0x03, 0x09, 0x63, 0x4b,
+                    0xb5, 0x29, 0x49, 0xfa, 0xbb, 0xa6, 0x31, 0x3c,
+                    0xc8, 0x15, 0xfb, 0xfc, 0xd6, 0xff, 0x04, 0x92,
+                    0x56, 0xbc, 0x66, 0xf1, 0x78, 0xfb, 0x14, 0x79,
+                    0x48, 0xd2, 0xcf, 0x87, 0x60, 0x23, 0xcf, 0xdb,
+                    0x1b, 0xad, 0x42, 0x32, 0x4e, 0x6d, 0x1f, 0x49,
+                ]);
+                before(() => {
+                    sinon.stub(window.crypto, "getRandomValues").callsFake(fakeGetRandomValues);
+                });
+                after(() => {
+                    window.crypto.getRandomValues.restore();
+                });
+                it('should send public value and encrypted credentials', function () {
+                    client._rfbCredentials = { username: 'username',
+                                               password: 'password123456' };
+                    sendSecurity(113, client);
+
+                    expect(client._sock).to.have.sent([113]);
+
+                    const g = new Uint8Array([0, 0, 0, 0, 0, 1, 0, 1]);
+                    const p = new Uint8Array([0, 0, 0, 0, 0x25, 0x18, 0x26, 0x17]);
+                    const A = new Uint8Array([0, 0, 0, 0, 0x0e, 0x12, 0xd0, 0xf5]);
+
+                    client._sock._websocket._receiveData(g);
+                    client._sock._websocket._receiveData(p);
+                    client._sock._websocket._receiveData(A);
+
+                    expect(client._sock).to.have.sent(expected);
+                    expect(client._rfbInitState).to.equal('SecurityResult');
                 });
             });
 
