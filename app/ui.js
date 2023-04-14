@@ -1815,7 +1815,7 @@ const UI = {
 };
 
 // Set up translations
-const LINGUAS = ["cs", "de", "el", "es", "fr", "it", "ja", "ko", "nl", "pl", "pt_BR", "ru", "sv", "tr", "zh_CN", "zh_TW"];
+const LINGUAS = ["cs", "de", "el", "en", "es", "fr", "it", "ja", "ko", "nl", "pl", "pt_BR", "ru", "sv", "tr", "zh_CN", "zh_TW"];
 l10n.setup(LINGUAS);
 if (l10n.language === "en" || l10n.dictionary !== undefined) {
     UI.prime();
